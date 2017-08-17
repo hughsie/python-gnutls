@@ -7,9 +7,43 @@ import os
 import time
 
 from gnutls.crypto import *
+from gnutls.constants import *
+from gnutls.errors import *
 
 script_path = os.path.realpath(os.path.dirname(sys.argv[0]))
 certs_path = os.path.join(script_path, 'certs')
+
+# PCKS7 sign some data then verify it -- FIXME: can we have the CA privkey?
+cert = X509Certificate(open(certs_path + '/ca.pem').read())
+if True:
+    privkey = X509PrivateKey(open(certs_path + '/valid.key').read())
+    data = 'Hello World!'
+    pkcs7 = Pkcs7()
+    pkcs7.sign(cert, privkey, data, flags=PKCS7_INCLUDE_TIME | PKCS7_INCLUDE_CERT)
+    data_sig = pkcs7.export()
+    print 'PKCS7 p7b data:', data_sig
+
+if True:
+    try:
+        pkcs7 = Pkcs7()
+        pkcs7.import_signature(data_sig)
+        pkcs7.verify_direct(cert, data)
+        print "X509Certificate: OK"
+    except GNUTLSError as e:
+        print e
+
+if True:
+    try:
+        pkcs7 = Pkcs7()
+        pkcs7.import_signature(data_sig)
+        tl = X509TrustList()
+        tl.add_ca(cert)
+        pkcs7.verify(tl, data)
+        print "X509TrustList: OK"
+    except GNUTLSError as e:
+        print e
+
+print ''
 
 cert = X509Certificate(open(certs_path + '/valid.crt').read())
 crl = X509CRL(open(certs_path + '/crl.pem').read())

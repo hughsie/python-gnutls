@@ -8,6 +8,9 @@ __all__ = [
     ## X509 certificate/private key formats
     'X509_FMT_DER', 'X509_FMT_PEM',
 
+    ## PKCS7 signing flags
+    'PKCS7_EMBED_DATA', 'PKCS7_INCLUDE_TIME', 'PKCS7_INCLUDE_CERT', 'PKCS7_WRITE_SPKI',
+
     ## Miscellaneous
     'CERT_REQUEST', 'CERT_REQUIRE', 'SHUT_RDWR', 'SHUT_WR'
 ]

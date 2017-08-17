@@ -1,7 +1,7 @@
 
 """GNUTLS crypto support"""
 
-__all__ = ['X509Name', 'X509Certificate', 'X509PrivateKey', 'X509Identity', 'X509CRL', 'DHParams']
+__all__ = ['X509Name', 'X509Certificate', 'X509PrivateKey', 'X509Identity', 'X509CRL', 'DHParams', 'Pkcs7', 'X509TrustList', 'PrivateKey', 'PublicKey']
 
 import re
 from ctypes import *
@@ -65,6 +65,159 @@ class AlternativeNames(object):
         for name, key in self.__slots__.iteritems():
             setattr(self, name, tuple(names.get(key, ())))
 
+
+class X509TrustList(object):
+
+    def __new__(cls, *args, **kwargs):
+        instance = object.__new__(cls)
+        instance.__deinit = gnutls_x509_trust_list_deinit
+        instance._c_object = gnutls_x509_trust_list_t()
+        instance._alternative_names = None
+        return instance
+
+    def __init__(self):
+        gnutls_x509_trust_list_init(byref(self._c_object), 0)
+
+    def __del__(self):
+        self.__deinit(self._c_object, 0)
+
+    def add_ca(self, cert, flags=0):
+        gnutls_x509_trust_list_add_cas(self._c_object,
+                                       byref(cert._c_object),
+                                       1, flags)
+
+    def add_certificate(self, cert, flags=0):
+
+        # mrrrggg, we have to export the certificate to a blob
+        buf = cert.export()
+        data = gnutls_datum_t(cast(c_char_p(buf), POINTER(c_ubyte)), c_uint(len(buf)))
+        gnutls_x509_trust_list_add_trust_mem(self._c_object,
+                                             byref(data))
+
+class Pkcs7(object):
+
+    def __new__(cls, *args, **kwargs):
+        instance = object.__new__(cls)
+        instance.__deinit = gnutls_pkcs7_deinit
+        instance._c_object = gnutls_pkcs7_t()
+        instance._alternative_names = None
+        return instance
+
+    def __init__(self):
+        gnutls_pkcs7_init(byref(self._c_object))
+
+    def __del__(self):
+        self.__deinit(self._c_object)
+
+    def import_signature(self, buf, format=X509_FMT_PEM):
+        data = gnutls_datum_t(cast(c_char_p(buf), POINTER(c_ubyte)), c_uint(len(buf)))
+        gnutls_pkcs7_import(self._c_object, byref(data), format)
+
+    def sign(self, cert, privkey, buf, hash_algo=None, flags=0):
+
+        # auto detect the best algorithm to use
+        if hash_algo is None:
+            pubkey = PublicKey()
+            pubkey.import_x509(cert)
+            hash_algo = pubkey.get_preferred_hash_algorithm()
+
+        # convert from a X509PrivateKey to a PrivateKey
+        if isinstance(privkey, X509PrivateKey):
+            pkey = PrivateKey()
+            pkey.import_x509(privkey)
+            privkey = pkey
+
+        data = gnutls_datum_t(cast(c_char_p(buf), POINTER(c_ubyte)), c_uint(len(buf)))
+        gnutls_pkcs7_sign(self._c_object,
+                          cert._c_object,
+                          privkey._c_object,
+                          byref(data),
+                          0, # FIXME?
+                          0, # FIXME?
+                          hash_algo,
+                          flags)
+
+    def get_signature_count(self):
+        return gnutls_pkcs7_get_signature_count(self._c_object)
+
+    def verify_direct(self, cert, buf, idx=-1, flags=0):
+        data = gnutls_datum_t(cast(c_char_p(buf), POINTER(c_ubyte)), c_uint(len(buf)))
+
+        # by default, check all signatures in context
+        if idx == -1:
+            idxs = range(self.get_signature_count())
+        else:
+            idxs = [idx]
+        for idx in idxs:
+            gnutls_pkcs7_verify_direct(self._c_object,
+                                       cert._c_object,
+                                       idx, data, flags)
+
+    def verify(self, tl, buf, idx=-1, flags=0):
+        data = gnutls_datum_t(cast(c_char_p(buf), POINTER(c_ubyte)), c_uint(len(buf)))
+        vdata = gnutls_typed_vdata_st()
+
+        # by default, check all signatures in context
+        if idx == -1:
+            idxs = range(self.get_signature_count())
+        else:
+            idxs = [idx]
+        for idx in idxs:
+            gnutls_pkcs7_verify(self._c_object, tl._c_object,
+                                byref(vdata), 0, # do we care about vdata?
+                                idx, byref(data), flags)
+
+    def export(self, format=X509_FMT_PEM):
+        size = c_size_t(4096)
+        pemdata = create_string_buffer(size.value)
+        try:
+            gnutls_pkcs7_export(self._c_object, format, cast(pemdata, c_void_p), byref(size))
+        except MemoryError:
+            pemdata = create_string_buffer(size.value)
+            gnutls_pkcs7_export(self._c_object, format, cast(pemdata, c_void_p), byref(size))
+        return pemdata.value
+
+class PrivateKey(object):
+
+    def __new__(cls, *args, **kwargs):
+        instance = object.__new__(cls)
+        instance.__deinit = gnutls_privkey_init
+        instance._c_object = gnutls_privkey_t()
+        instance._alternative_names = None
+        return instance
+
+    def __init__(self):
+        gnutls_privkey_init(byref(self._c_object))
+
+    def __del__(self):
+        self.__deinit(self._c_object)
+
+    def import_x509(self, x509_privkey, flags=0):
+        gnutls_privkey_import_x509(self._c_object, x509_privkey._c_object, flags)
+
+class PublicKey(object):
+
+    def __new__(cls, *args, **kwargs):
+        instance = object.__new__(cls)
+        instance.__deinit = gnutls_pubkey_init
+        instance._c_object = gnutls_pubkey_t()
+        instance._alternative_names = None
+        return instance
+
+    def __init__(self):
+        gnutls_pubkey_init(byref(self._c_object))
+
+    def __del__(self):
+        self.__deinit(self._c_object)
+
+    def import_x509(self, x509_cert, flags=0):
+        gnutls_pubkey_import_x509(self._c_object, x509_cert._c_object, flags)
+
+    def get_preferred_hash_algorithm(self):
+        algo = gnutls_digest_algorithm_t()
+        mand = c_uint()
+        gnutls_pubkey_get_preferred_hash_algorithm(self._c_object, algo, mand) # TODO: do something with mand?
+        return algo
 
 class X509Certificate(object):
 
